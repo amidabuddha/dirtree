@@ -65,7 +65,7 @@ dirtree -h -s ./my-rust-app
 
 Output:
 ```
-my-rust-app
+/path/to/dir/my-rust-app
 ├── .git
 │   └── (git contents...)
 ├── .gitignore
