@@ -40,6 +40,8 @@ dirtree [OPTIONS] [PATH]
 ### Options
 
 - `-h`: Show hidden files and directories
+- `-s`: Sort entries alphabetically
+- `-H, --help`: Display help message and exit
 
 ### Examples
 
@@ -74,7 +76,7 @@ my-rust-app
 
 List a specific directory:
 ```bash
-dirtree -h ./my-rust-app
+dirtree -h -s ./my-rust-app
 ```
 
 ## Contributing

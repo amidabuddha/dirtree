@@ -2,27 +2,30 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-// Function to print directory structure with indentation
-fn print_dir_structure(path: &Path, prefix: String, show_hidden: bool) {
+fn print_dir_structure(path: &Path, prefix: String, sort: bool, show_hidden: bool) {
     if let Ok(entries) = fs::read_dir(path) {
         let mut entries: Vec<_> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| {
+            .filter_map(|e| {
+                let e = e.ok()?;
                 let name = e.file_name();
                 let name_str = name.to_string_lossy();
-                show_hidden || !name_str.starts_with('.')
+                if show_hidden || !name_str.starts_with('.') {
+                    Some(e)
+                } else {
+                    None
+                }
             })
             .collect();
 
-        // Sort entries alphabetically
-        entries.sort_by(|a, b| a.path().cmp(&b.path()));
+        if sort {
+            entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+        }
 
         for (i, entry) in entries.iter().enumerate() {
             let is_last = i == entries.len() - 1;
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy();
 
-            // Print current entry
             println!(
                 "{}{} {}",
                 prefix,
@@ -30,72 +33,73 @@ fn print_dir_structure(path: &Path, prefix: String, show_hidden: bool) {
                 name
             );
 
-            // If it's a directory, recurse with updated prefix
             if entry.file_type().unwrap().is_dir() {
                 let new_prefix = format!(
                     "{}{}    ",
                     prefix,
                     if is_last { " " } else { "│" }
                 );
-                print_dir_structure(&entry.path(), new_prefix, show_hidden);
+                print_dir_structure(&entry.path(), new_prefix, sort, show_hidden);
             }
         }
     }
 }
 
-fn main() {
-    // Get command line arguments
-    let args: Vec<String> = env::args().collect();
+fn print_help() {
+    println!("Usage: dirtree [OPTIONS] [PATH]");
+    println!();
+    println!("Options:");
+    println!("  -h         Show hidden files");
+    println!("  -s         Sort alphabetically");
+    println!("  -H, --help Display this help");
+    println!();
+    println!("Default PATH is '.' (current directory).");
+}
 
-    // Parse arguments
+fn main() {
+    let args: Vec<String> = env::args().collect();
     let mut show_hidden = false;
+    let mut sort = false;
     let mut dir_path = None;
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-h" => {
-                show_hidden = true;
-                i += 1;
+    for arg in args.iter().skip(1) {
+        match arg.as_str() {
+            "-h" => show_hidden = true,
+            "-s" => sort = true,
+            "-H" | "--help" => {
+                print_help();
+                std::process::exit(0);
             }
             path => {
-                if dir_path.is_none() {
-                    dir_path = Some(path);
-                    i += 1;
-                } else {
-                    println!("Error: Multiple directory paths specified");
+                if dir_path.replace(path).is_some() {
+                    println!("Error: Multiple paths specified");
                     std::process::exit(1);
                 }
             }
         }
     }
 
-    // Use current directory if no path is provided
-    let dir_path = match dir_path {
-        Some(path) => path.to_string(),
-        None => ".".to_string(),
-    };
+    let dir_path = dir_path.unwrap_or(".");
+    let path = Path::new(dir_path);
 
-    let path = Path::new(&dir_path);
-
-    // Verify path exists and is a directory
     if !path.exists() {
         println!("Error: Path '{}' does not exist", dir_path);
         std::process::exit(1);
     }
-
     if !path.is_dir() {
         println!("Error: '{}' is not a directory", dir_path);
         std::process::exit(1);
     }
 
-    // Print root directory: "." if no path provided, otherwise the path
-    if dir_path == "." {
-        println!(".");
+    // Print full canonical path, or "." if no path provided
+    let root_name = if dir_path == "." {
+        ".".to_string()
     } else {
-        println!("{}", path.canonicalize().unwrap().file_name().unwrap().to_string_lossy());
-    }
+        path.canonicalize()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| dir_path.to_string())
+    };
+    println!("{}", root_name);
 
-    // Start printing directory structure
-    print_dir_structure(path, String::new(), show_hidden);
+    print_dir_structure(path, String::new(), sort, show_hidden);
 }
