@@ -50,8 +50,8 @@ fn print_help() {
     println!();
     println!("Options:");
     println!("  -a         Show hidden files");
-    println!("  -U          Leave files unsorted.");
-    println!("  --help Display this help");
+    println!("  -U         Leave files unsorted.");
+    println!("  --help     Display this help");
     println!();
     println!("Default PATH is '.' (current directory).");
 }
