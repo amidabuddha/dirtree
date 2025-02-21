@@ -73,7 +73,7 @@ fn main() {
     // Use current directory if no path is provided
     let dir_path = match dir_path {
         Some(path) => path.to_string(),
-        None => ".".to_string(), // Default to current directory
+        None => ".".to_string(),
     };
 
     let path = Path::new(&dir_path);
@@ -89,8 +89,12 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Print root directory name (use full path for clarity)
-    println!("{}", path.canonicalize().unwrap().file_name().unwrap().to_string_lossy());
+    // Print root directory: "." if no path provided, otherwise the path
+    if dir_path == "." {
+        println!(".");
+    } else {
+        println!("{}", path.canonicalize().unwrap().file_name().unwrap().to_string_lossy());
+    }
 
     // Start printing directory structure
     print_dir_structure(path, String::new(), show_hidden);
