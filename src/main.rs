@@ -49,9 +49,9 @@ fn print_help() {
     println!("Usage: dirtree [OPTIONS] [PATH]");
     println!();
     println!("Options:");
-    println!("  -h         Show hidden files");
-    println!("  -s         Sort alphabetically");
-    println!("  -H, --help Display this help");
+    println!("  -a         Show hidden files");
+    println!("  -U          Leave files unsorted.");
+    println!("  --help Display this help");
     println!();
     println!("Default PATH is '.' (current directory).");
 }
@@ -59,14 +59,14 @@ fn print_help() {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut show_hidden = false;
-    let mut sort = false;
+    let mut sort = true;
     let mut dir_path = None;
 
     for arg in args.iter().skip(1) {
         match arg.as_str() {
-            "-h" => show_hidden = true,
-            "-s" => sort = true,
-            "-H" | "--help" => {
+            "-a" => show_hidden = true,
+            "-U" => sort = false,
+            "--help" => {
                 print_help();
                 std::process::exit(0);
             }
