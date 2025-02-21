@@ -1,8 +1,15 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 
-fn print_dir_structure(path: &Path, prefix: String, sort: bool, show_hidden: bool) {
+fn print_dir_structure<W: Write>(
+    path: &Path,
+    prefix: &mut String,
+    sort: bool,
+    show_hidden: bool,
+    writer: &mut W,
+) {
     if let Ok(entries) = fs::read_dir(path) {
         let mut entries: Vec<_> = entries
             .filter_map(|e| {
@@ -23,37 +30,42 @@ fn print_dir_structure(path: &Path, prefix: String, sort: bool, show_hidden: boo
 
         for (i, entry) in entries.iter().enumerate() {
             let is_last = i == entries.len() - 1;
-            let file_name = entry.file_name();
-            let name = file_name.to_string_lossy();
+            let name = entry.file_name().to_string_lossy().into_owned(); // Convert to owned String
 
-            println!(
-                "{}{} {}",
-                prefix,
-                if is_last { "└──" } else { "├──" },
-                name
-            );
+            // Write the current entry line
+            writeln!(writer, "{}{} {}", prefix, if is_last { "└──" } else { "├──" }, name)
+                .expect("Failed to write entry");
 
-            if entry.file_type().unwrap().is_dir() {
-                let new_prefix = format!(
-                    "{}{}    ",
-                    prefix,
-                    if is_last { " " } else { "│" }
-                );
-                print_dir_structure(&entry.path(), new_prefix, sort, show_hidden);
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_dir() {
+                    // Append to the prefix for the next level
+                    let old_len = prefix.len();
+                    if is_last {
+                        prefix.push_str("    "); // Append spaces for last entry
+                    } else {
+                        prefix.push_str("│   "); // Append vertical bar and spaces
+                    }
+
+                    // Recurse into the directory
+                    print_dir_structure(&entry.path(), prefix, sort, show_hidden, writer);
+
+                    // Truncate the prefix back to its original length
+                    prefix.truncate(old_len);
+                }
             }
         }
     }
 }
 
-fn print_help() {
-    println!("Usage: dirtree [OPTIONS] [PATH]");
-    println!();
-    println!("Options:");
-    println!("  -a         Show hidden files");
-    println!("  -U         Leave files unsorted.");
-    println!("  --help     Display this help");
-    println!();
-    println!("Default PATH is '.' (current directory).");
+fn print_help<W: Write>(writer: &mut W) {
+    writeln!(writer, "Usage: dirtree [OPTIONS] [PATH]").unwrap();
+    writeln!(writer).unwrap();
+    writeln!(writer, "Options:").unwrap();
+    writeln!(writer, "  -a        Show hidden files").unwrap();
+    writeln!(writer, "  -U        Sort alphabetically").unwrap();
+    writeln!(writer, "  --help    Display this help").unwrap();
+    writeln!(writer).unwrap();
+    writeln!(writer, "Default PATH is '.' (current directory).").unwrap();
 }
 
 fn main() {
@@ -67,8 +79,10 @@ fn main() {
             "-a" => show_hidden = true,
             "-U" => sort = false,
             "--help" => {
-                print_help();
-                std::process::exit(0);
+                let stdout = io::stdout();
+                let mut writer = io::BufWriter::new(stdout.lock());
+                print_help(&mut writer);
+                return;
             }
             path => {
                 if dir_path.replace(path).is_some() {
@@ -91,7 +105,9 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Print full canonical path, or "." if no path provided
+    let stdout = io::stdout();
+    let mut writer = io::BufWriter::new(stdout.lock());
+
     let root_name = if dir_path == "." {
         ".".to_string()
     } else {
@@ -99,7 +115,8 @@ fn main() {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| dir_path.to_string())
     };
-    println!("{}", root_name);
+    writeln!(writer, "{}", root_name).unwrap();
 
-    print_dir_structure(path, String::new(), sort, show_hidden);
+    let mut prefix = String::new();
+    print_dir_structure(path, &mut prefix, sort, show_hidden, &mut writer);
 }
