@@ -5,8 +5,8 @@ A simple Rust command-line tool to display directory structures in a tree-like f
 ## Features
 - Displays directory contents in a hierarchical tree view
 - Optional `-h` flag to show hidden files and directories (those starting with `.`)
+- Optional `-s` flag to sort directory contents alphabetically
 - Defaults to current directory if no path is provided
-- Alphabetically sorts directory contents
 - Cross-platform compatibility
 
 ## Installation
