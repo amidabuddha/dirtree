@@ -52,15 +52,15 @@ dirtree
 
 Output:
 ```
-my-rust-app
+.
 ├── Cargo.toml
 └── src
     └── main.rs
 ```
 
-List current directory with hidden files:
+List a specific directory with hidden files and sorting:
 ```bash
-dirtree -h
+dirtree -h -s ./my-rust-app
 ```
 
 Output:
@@ -72,11 +72,6 @@ my-rust-app
 ├── Cargo.toml
 └── src
     └── main.rs
-```
-
-List a specific directory:
-```bash
-dirtree -h -s ./my-rust-app
 ```
 
 ## Contributing
