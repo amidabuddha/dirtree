@@ -58,14 +58,16 @@ fn print_dir_structure<W: Write>(
 }
 
 fn print_help<W: Write>(writer: &mut W) {
-    writeln!(writer, "Usage: dirtree [OPTIONS] [PATH]").unwrap();
-    writeln!(writer).unwrap();
-    writeln!(writer, "Options:").unwrap();
-    writeln!(writer, "  -a        Show hidden files").unwrap();
-    writeln!(writer, "  -U        Leave entries unsorted").unwrap();
-    writeln!(writer, "  --help    Display this help").unwrap();
-    writeln!(writer).unwrap();
-    writeln!(writer, "Default PATH is '.' (current directory).").unwrap();
+    writeln!(
+        writer,
+        r#"Usage: dirtree [OPTIONS] [PATH]
+
+Options:
+  -a        Show hidden files
+  -U        Leave entries unsorted
+  --help    Display this help
+
+Default PATH is '.' (current directory)."#).unwrap();
 }
 
 fn main() {
