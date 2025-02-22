@@ -62,7 +62,7 @@ fn print_help<W: Write>(writer: &mut W) {
     writeln!(writer).unwrap();
     writeln!(writer, "Options:").unwrap();
     writeln!(writer, "  -a        Show hidden files").unwrap();
-    writeln!(writer, "  -U        Sort alphabetically").unwrap();
+    writeln!(writer, "  -U        Leave entries unsorted").unwrap();
     writeln!(writer, "  --help    Display this help").unwrap();
     writeln!(writer).unwrap();
     writeln!(writer, "Default PATH is '.' (current directory).").unwrap();
