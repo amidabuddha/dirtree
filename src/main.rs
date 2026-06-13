@@ -1,7 +1,98 @@
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process;
+
+#[derive(Debug, PartialEq, Eq)]
+struct Config {
+    show_hidden: bool,
+    sort: bool,
+    dir_path: PathBuf,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ParsedArgs {
+    Help,
+    Run(Config),
+}
+
+#[derive(Debug)]
+enum AppError {
+    Message(String),
+    Io(io::Error),
+}
+
+impl AppError {
+    fn is_broken_pipe(&self) -> bool {
+        matches!(self, Self::Io(error) if error.kind() == io::ErrorKind::BrokenPipe)
+    }
+}
+
+impl From<String> for AppError {
+    fn from(value: String) -> Self {
+        Self::Message(value)
+    }
+}
+
+impl From<io::Error> for AppError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+impl std::fmt::Display for AppError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Message(message) => formatter.write_str(message),
+            Self::Io(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+fn parse_args<I>(args: I) -> Result<ParsedArgs, String>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut show_hidden = false;
+    let mut sort = true;
+    let mut dir_path = None;
+    let mut options_finished = false;
+
+    for arg in args {
+        if !options_finished {
+            if arg.as_os_str() == OsStr::new("--help") {
+                return Ok(ParsedArgs::Help);
+            }
+            if arg.as_os_str() == OsStr::new("--") {
+                options_finished = true;
+                continue;
+            }
+            if arg.as_os_str() == OsStr::new("-a") {
+                show_hidden = true;
+                continue;
+            }
+            if arg.as_os_str() == OsStr::new("-U") {
+                sort = false;
+                continue;
+            }
+            if starts_with_dash(arg.as_os_str()) {
+                return Err(format!("Unknown option: {}", arg.to_string_lossy()));
+            }
+        }
+
+        if dir_path.replace(PathBuf::from(arg)).is_some() {
+            return Err("Multiple paths specified".to_string());
+        }
+    }
+
+    Ok(ParsedArgs::Run(Config {
+        show_hidden,
+        sort,
+        dir_path: dir_path.unwrap_or_else(|| PathBuf::from(".")),
+    }))
+}
 
 fn print_dir_structure<W: Write>(
     path: &Path,
@@ -9,55 +100,91 @@ fn print_dir_structure<W: Write>(
     sort: bool,
     show_hidden: bool,
     writer: &mut W,
-) {
-    if let Ok(entries) = fs::read_dir(path) {
-        let mut entries: Vec<_> = entries
-            .filter_map(|e| {
-                let e = e.ok()?;
-                let name = e.file_name();
-                let name_str = name.to_string_lossy();
-                if show_hidden || !name_str.starts_with('.') {
-                    Some(e)
-                } else {
-                    None
-                }
-            })
-            .collect();
+) -> io::Result<()> {
+    let read_dir = fs::read_dir(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("Failed to read '{}': {error}", path.display()),
+        )
+    })?;
+    let mut entries = Vec::new();
 
-        if sort {
-            entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-        }
-
-        for (i, entry) in entries.iter().enumerate() {
-            let is_last = i == entries.len() - 1;
-            let name = entry.file_name().to_string_lossy().into_owned(); // Convert to owned String
-
-            // Write the current entry line
-            writeln!(writer, "{}{} {}", prefix, if is_last { "└──" } else { "├──" }, name)
-                .expect("Failed to write entry");
-
-            if let Ok(file_type) = entry.file_type() {
-                if file_type.is_dir() {
-                    // Append to the prefix for the next level
-                    let old_len = prefix.len();
-                    if is_last {
-                        prefix.push_str("    "); // Append spaces for last entry
-                    } else {
-                        prefix.push_str("│   "); // Append vertical bar and spaces
-                    }
-
-                    // Recurse into the directory
-                    print_dir_structure(&entry.path(), prefix, sort, show_hidden, writer);
-
-                    // Truncate the prefix back to its original length
-                    prefix.truncate(old_len);
-                }
-            }
+    for entry in read_dir {
+        let entry = entry.map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Failed to read an entry in '{}': {error}", path.display()),
+            )
+        })?;
+        let name = entry.file_name();
+        if show_hidden || !is_hidden(&name) {
+            entries.push(entry);
         }
     }
+
+    if sort {
+        entries.sort_by_key(|entry| entry.file_name());
+    }
+
+    for (i, entry) in entries.iter().enumerate() {
+        let is_last = i == entries.len() - 1;
+        let connector = if is_last { "└──" } else { "├──" };
+        let name = entry.file_name().to_string_lossy().into_owned();
+
+        writeln!(writer, "{prefix}{connector} {name}")?;
+
+        let entry_path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Failed to read metadata for '{}': {error}",
+                    entry_path.display()
+                ),
+            )
+        })?;
+        if file_type.is_dir() {
+            let old_len = prefix.len();
+            if is_last {
+                prefix.push_str("    ");
+            } else {
+                prefix.push_str("│   ");
+            }
+
+            print_dir_structure(&entry_path, prefix, sort, show_hidden, writer)?;
+
+            prefix.truncate(old_len);
+        }
+    }
+
+    Ok(())
 }
 
-fn print_help<W: Write>(writer: &mut W) {
+#[cfg(unix)]
+fn is_hidden(name: &OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    name.as_bytes().starts_with(b".")
+}
+
+#[cfg(not(unix))]
+fn is_hidden(name: &OsStr) -> bool {
+    name.to_string_lossy().starts_with('.')
+}
+
+#[cfg(unix)]
+fn starts_with_dash(arg: &OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    arg.as_bytes().starts_with(b"-")
+}
+
+#[cfg(not(unix))]
+fn starts_with_dash(arg: &OsStr) -> bool {
+    arg.to_string_lossy().starts_with('-')
+}
+
+fn print_help<W: Write>(writer: &mut W) -> io::Result<()> {
     writeln!(
         writer,
         r#"Usage: dirtree [OPTIONS] [PATH]
@@ -67,58 +194,197 @@ Options:
   -U        Leave entries unsorted
   --help    Display this help
 
-Default PATH is '.' (current directory)."#).unwrap();
+Default PATH is '.' (current directory)."#
+    )
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let mut show_hidden = false;
-    let mut sort = true;
-    let mut dir_path = None;
+fn print_tree<W: Write>(config: &Config, writer: &mut W) -> io::Result<()> {
+    let path = &config.dir_path;
+    let metadata = fs::metadata(path).map_err(|error| {
+        let message = if error.kind() == io::ErrorKind::NotFound {
+            format!("Path '{}' does not exist", path.display())
+        } else {
+            format!("Failed to inspect '{}': {error}", path.display())
+        };
+        io::Error::new(error.kind(), message)
+    })?;
 
-    for arg in args.iter().skip(1) {
-        match arg.as_str() {
-            "-a" => show_hidden = true,
-            "-U" => sort = false,
-            "--help" => {
-                let stdout = io::stdout();
-                let mut writer = io::BufWriter::new(stdout.lock());
-                print_help(&mut writer);
-                return;
-            }
-            path => {
-                if dir_path.replace(path).is_some() {
-                    println!("Error: Multiple paths specified");
-                    std::process::exit(1);
-                }
-            }
-        }
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("'{}' is not a directory", path.display()),
+        ));
     }
 
-    let dir_path = dir_path.unwrap_or(".");
-    let path = Path::new(dir_path);
-
-    if !path.exists() {
-        println!("Error: Path '{}' does not exist", dir_path);
-        std::process::exit(1);
-    }
-    if !path.is_dir() {
-        println!("Error: '{}' is not a directory", dir_path);
-        std::process::exit(1);
-    }
-
-    let stdout = io::stdout();
-    let mut writer = io::BufWriter::new(stdout.lock());
-
-    let root_name = if dir_path == "." {
+    let root_name = if path == Path::new(".") {
         ".".to_string()
     } else {
         path.canonicalize()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| dir_path.to_string())
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| path.display().to_string())
     };
-    writeln!(writer, "{}", root_name).unwrap();
+    writeln!(writer, "{root_name}")?;
 
     let mut prefix = String::new();
-    print_dir_structure(path, &mut prefix, sort, show_hidden, &mut writer);
+    print_dir_structure(path, &mut prefix, config.sort, config.show_hidden, writer)
+}
+
+fn run<I, W>(args: I, writer: &mut W) -> Result<(), AppError>
+where
+    I: IntoIterator<Item = OsString>,
+    W: Write,
+{
+    match parse_args(args)? {
+        ParsedArgs::Help => print_help(writer)?,
+        ParsedArgs::Run(config) => print_tree(&config, writer)?,
+    }
+
+    Ok(())
+}
+
+fn main() {
+    let stdout = io::stdout();
+    let mut writer = io::BufWriter::new(stdout.lock());
+
+    if let Err(error) = run(env::args_os().skip(1), &mut writer) {
+        if error.is_broken_pipe() {
+            return;
+        }
+
+        let _ = writer.flush();
+        eprintln!("Error: {error}");
+        process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let base = env::temp_dir();
+
+            for attempt in 0..100 {
+                let nanos = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock should be after the Unix epoch")
+                    .as_nanos();
+                let path = base.join(format!("dirtree-test-{}-{nanos}-{attempt}", process::id()));
+
+                if fs::create_dir(&path).is_ok() {
+                    return Self { path };
+                }
+            }
+
+            panic!("failed to create temporary test directory");
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn parse_defaults_to_current_directory() {
+        let parsed = parse_args(Vec::new()).expect("parse should succeed");
+
+        assert_eq!(
+            parsed,
+            ParsedArgs::Run(Config {
+                show_hidden: false,
+                sort: true,
+                dir_path: PathBuf::from("."),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_rejects_unknown_options() {
+        let error = parse_args([OsString::from("--bad-option")]).expect_err("parse should fail");
+
+        assert_eq!(error, "Unknown option: --bad-option");
+    }
+
+    #[test]
+    fn parse_accepts_dash_prefixed_path_after_separator() {
+        let parsed = parse_args([OsString::from("--"), OsString::from("-fixtures")])
+            .expect("parse should succeed");
+
+        assert_eq!(
+            parsed,
+            ParsedArgs::Run(Config {
+                show_hidden: false,
+                sort: true,
+                dir_path: PathBuf::from("-fixtures"),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_rejects_multiple_paths() {
+        let error = parse_args([OsString::from("first"), OsString::from("second")])
+            .expect_err("parse should fail");
+
+        assert_eq!(error, "Multiple paths specified");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_accepts_non_utf8_paths() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let raw_path = OsString::from_vec(vec![b'p', b'a', b't', b'h', 0xff]);
+        let parsed = parse_args([raw_path.clone()]).expect("parse should succeed");
+
+        match parsed {
+            ParsedArgs::Run(config) => assert_eq!(config.dir_path.as_os_str(), raw_path),
+            ParsedArgs::Help => panic!("expected runnable config"),
+        }
+    }
+
+    #[test]
+    fn print_tree_filters_hidden_entries_by_default() {
+        let temp_dir = TempDir::new();
+        fs::write(temp_dir.path().join(".hidden"), "").expect("write hidden file");
+        fs::write(temp_dir.path().join("visible.txt"), "").expect("write visible file");
+
+        let config = Config {
+            show_hidden: false,
+            sort: true,
+            dir_path: temp_dir.path().to_path_buf(),
+        };
+        let mut output = Vec::new();
+
+        print_tree(&config, &mut output).expect("tree should print");
+
+        let output = String::from_utf8(output).expect("tree output should be UTF-8");
+        assert!(output.contains("visible.txt"));
+        assert!(!output.contains(".hidden"));
+    }
+
+    #[test]
+    fn print_dir_structure_returns_read_dir_errors() {
+        let temp_dir = TempDir::new();
+        let file_path = temp_dir.path().join("file.txt");
+        fs::write(&file_path, "").expect("write file");
+
+        let mut prefix = String::new();
+        let mut output = Vec::new();
+        let error = print_dir_structure(&file_path, &mut prefix, true, true, &mut output)
+            .expect_err("read_dir error should be returned");
+
+        assert!(error.to_string().contains("Failed to read"));
+    }
 }
