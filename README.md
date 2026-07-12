@@ -2,13 +2,6 @@
 
 A simple Rust command-line tool to display directory structures in a tree-like format, similar to the Unix `tree` command.
 
-## Features
-- Displays directory contents in a hierarchical tree view
-- Optional `-a` flag to show hidden files and directories (those starting with `.`)
-- Optional `-U` flag to disable alphabetical sorting
-- Defaults to current directory if no path is provided
-- Cross-platform compatibility
-
 ## Installation
 
 ### Prerequisites
@@ -43,33 +36,15 @@ dirtree [OPTIONS] [PATH]
 - `-U`: Leave entries unsorted
 - `--help`: Display help message and exit
 
-### Examples
+### Example
 
-List current directory (no hidden files, sorted):
-```bash
-dirtree
-```
+From a Rust project directory:
 
-Output:
-```
+```console
+$ dirtree
 .
 ├── Cargo.toml
-└── src
-    └── main.rs
-```
-
-List a specific directory with hidden files and no sorting:
-```bash
-dirtree -a -U ./my-rust-app
-```
-
-Output:
-```
-/path/to/dir/my-rust-app
-├── Cargo.toml
-├── .gitignore
-├── .git
-│   └── (git contents...)
+├── README.md
 └── src
     └── main.rs
 ```

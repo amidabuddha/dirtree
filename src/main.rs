@@ -18,39 +18,6 @@ enum ParsedArgs {
     Run(Config),
 }
 
-#[derive(Debug)]
-enum AppError {
-    Message(String),
-    Io(io::Error),
-}
-
-impl AppError {
-    fn is_broken_pipe(&self) -> bool {
-        matches!(self, Self::Io(error) if error.kind() == io::ErrorKind::BrokenPipe)
-    }
-}
-
-impl From<String> for AppError {
-    fn from(value: String) -> Self {
-        Self::Message(value)
-    }
-}
-
-impl From<io::Error> for AppError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
-    }
-}
-
-impl std::fmt::Display for AppError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Message(message) => formatter.write_str(message),
-            Self::Io(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
 fn parse_args<I>(args: I) -> Result<ParsedArgs, String>
 where
     I: IntoIterator<Item = OsString>,
@@ -118,20 +85,23 @@ fn print_dir_structure<W: Write>(
         })?;
         let name = entry.file_name();
         if show_hidden || !is_hidden(&name) {
-            entries.push(entry);
+            entries.push((name, entry));
         }
     }
 
     if sort {
-        entries.sort_by_key(|entry| entry.file_name());
+        entries.sort_unstable_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
     }
 
-    for (i, entry) in entries.iter().enumerate() {
+    for (i, (name, entry)) in entries.iter().enumerate() {
         let is_last = i == entries.len() - 1;
-        let connector = if is_last { "└──" } else { "├──" };
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let (connector, child_prefix) = if is_last {
+            ("└──", "    ")
+        } else {
+            ("├──", "│   ")
+        };
 
-        writeln!(writer, "{prefix}{connector} {name}")?;
+        writeln!(writer, "{prefix}{connector} {}", name.to_string_lossy())?;
 
         let entry_path = entry.path();
         let file_type = entry.file_type().map_err(|error| {
@@ -145,11 +115,7 @@ fn print_dir_structure<W: Write>(
         })?;
         if file_type.is_dir() {
             let old_len = prefix.len();
-            if is_last {
-                prefix.push_str("    ");
-            } else {
-                prefix.push_str("│   ");
-            }
+            prefix.push_str(child_prefix);
 
             print_dir_structure(&entry_path, prefix, sort, show_hidden, writer)?;
 
@@ -160,28 +126,12 @@ fn print_dir_structure<W: Write>(
     Ok(())
 }
 
-#[cfg(unix)]
 fn is_hidden(name: &OsStr) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-
-    name.as_bytes().starts_with(b".")
+    name.as_encoded_bytes().starts_with(b".")
 }
 
-#[cfg(not(unix))]
-fn is_hidden(name: &OsStr) -> bool {
-    name.to_string_lossy().starts_with('.')
-}
-
-#[cfg(unix)]
 fn starts_with_dash(arg: &OsStr) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-
-    arg.as_bytes().starts_with(b"-")
-}
-
-#[cfg(not(unix))]
-fn starts_with_dash(arg: &OsStr) -> bool {
-    arg.to_string_lossy().starts_with('-')
+    arg.as_encoded_bytes().starts_with(b"-")
 }
 
 fn print_help<W: Write>(writer: &mut W) -> io::Result<()> {
@@ -229,12 +179,15 @@ fn print_tree<W: Write>(config: &Config, writer: &mut W) -> io::Result<()> {
     print_dir_structure(path, &mut prefix, config.sort, config.show_hidden, writer)
 }
 
-fn run<I, W>(args: I, writer: &mut W) -> Result<(), AppError>
+fn run<I, W>(args: I, writer: &mut W) -> io::Result<()>
 where
     I: IntoIterator<Item = OsString>,
     W: Write,
 {
-    match parse_args(args)? {
+    let parsed =
+        parse_args(args).map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+
+    match parsed {
         ParsedArgs::Help => print_help(writer)?,
         ParsedArgs::Run(config) => print_tree(&config, writer)?,
     }
@@ -247,7 +200,7 @@ fn main() {
     let mut writer = io::BufWriter::new(stdout.lock());
 
     if let Err(error) = run(env::args_os().skip(1), &mut writer) {
-        if error.is_broken_pipe() {
+        if error.kind() == io::ErrorKind::BrokenPipe {
             return;
         }
 
