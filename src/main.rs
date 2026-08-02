@@ -192,7 +192,7 @@ where
         ParsedArgs::Run(config) => print_tree(&config, writer)?,
     }
 
-    Ok(())
+    writer.flush()
 }
 
 fn main() {
@@ -214,6 +214,24 @@ fn main() {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[derive(Default)]
+    struct RecordingWriter {
+        output: Vec<u8>,
+        flushed: bool,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.output.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushed = true;
+            Ok(())
+        }
+    }
 
     struct TempDir {
         path: PathBuf,
@@ -249,6 +267,19 @@ mod tests {
         }
     }
 
+    fn render_tree(path: &Path, show_hidden: bool, sort: bool) -> String {
+        let config = Config {
+            show_hidden,
+            sort,
+            dir_path: path.to_path_buf(),
+        };
+        let mut output = Vec::new();
+
+        print_tree(&config, &mut output).expect("tree should print");
+
+        String::from_utf8(output).expect("tree output should be UTF-8")
+    }
+
     #[test]
     fn parse_defaults_to_current_directory() {
         let parsed = parse_args(Vec::new()).expect("parse should succeed");
@@ -259,6 +290,25 @@ mod tests {
                 show_hidden: false,
                 sort: true,
                 dir_path: PathBuf::from("."),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_enables_hidden_and_unsorted_options() {
+        let parsed = parse_args([
+            OsString::from("-a"),
+            OsString::from("-U"),
+            OsString::from("fixtures"),
+        ])
+        .expect("parse should succeed");
+
+        assert_eq!(
+            parsed,
+            ParsedArgs::Run(Config {
+                show_hidden: true,
+                sort: false,
+                dir_path: PathBuf::from("fixtures"),
             })
         );
     }
@@ -308,23 +358,52 @@ mod tests {
     }
 
     #[test]
+    fn run_prints_help_and_flushes_output() {
+        let mut writer = RecordingWriter::default();
+
+        run([OsString::from("--help")], &mut writer).expect("help should print");
+
+        assert!(writer.flushed);
+        let output = String::from_utf8(writer.output).expect("help output should be UTF-8");
+        assert!(output.starts_with("Usage: dirtree [OPTIONS] [PATH]\n"));
+        assert!(output.contains("-a        Show hidden files"));
+        assert!(output.contains("-U        Leave entries unsorted"));
+    }
+
+    #[test]
     fn print_tree_filters_hidden_entries_by_default() {
         let temp_dir = TempDir::new();
         fs::write(temp_dir.path().join(".hidden"), "").expect("write hidden file");
         fs::write(temp_dir.path().join("visible.txt"), "").expect("write visible file");
 
-        let config = Config {
-            show_hidden: false,
-            sort: true,
-            dir_path: temp_dir.path().to_path_buf(),
-        };
-        let mut output = Vec::new();
-
-        print_tree(&config, &mut output).expect("tree should print");
-
-        let output = String::from_utf8(output).expect("tree output should be UTF-8");
+        let output = render_tree(temp_dir.path(), false, true);
         assert!(output.contains("visible.txt"));
         assert!(!output.contains(".hidden"));
+    }
+
+    #[test]
+    fn print_tree_includes_hidden_entries_when_requested() {
+        let temp_dir = TempDir::new();
+        fs::write(temp_dir.path().join(".hidden"), "").expect("write hidden file");
+        fs::write(temp_dir.path().join("visible.txt"), "").expect("write visible file");
+
+        let output = render_tree(temp_dir.path(), true, true);
+
+        assert!(output.contains(".hidden"));
+        assert!(output.contains("visible.txt"));
+    }
+
+    #[test]
+    fn print_tree_sorts_entries_and_formats_nested_branches() {
+        let temp_dir = TempDir::new();
+        fs::write(temp_dir.path().join("zeta.txt"), "").expect("write zeta file");
+        fs::create_dir(temp_dir.path().join("alpha")).expect("create alpha directory");
+        fs::write(temp_dir.path().join("alpha").join("nested.txt"), "").expect("write nested file");
+
+        let output = render_tree(temp_dir.path(), false, true);
+        let body: Vec<_> = output.lines().skip(1).collect();
+
+        assert_eq!(body, ["├── alpha", "│   └── nested.txt", "└── zeta.txt"]);
     }
 
     #[test]
