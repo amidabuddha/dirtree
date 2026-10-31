@@ -20,6 +20,10 @@ When a change is complete, close it out in this order:
 
 Installing the binary does not need a version bump.
 
+## Documentation
+
+- Docs describe the current state only. Do not add dated implementation logs, acceptance or validation evidence, release reports or completed-task lists; put evidence in commit messages.
+
 ## Git workflow
 
 - Commit locally as work progresses. Push only when Stefan asks; when a milestone is done, ask once whether to push now or not yet.
